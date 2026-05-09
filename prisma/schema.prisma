@@ -1,0 +1,70 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model BlogDraft {
+  id                String    @id @default(cuid())
+  createdAt         DateTime  @default(now())
+  sourceType        String
+  sourceUrl         String
+  sourceQuestion    String
+  niche             String
+  title             String
+  titleVariants     String
+  clearAnswer       String
+  bodyOutline       String
+  comparisonTable   String
+  faqSection        String
+  internalLinks     String
+  ctaBlock          String
+  imagePrompt       String
+  intentScore       Float
+  nicheMatch        Float
+  totalScore        Float
+  status            String    @default("pending")
+  promotedToPostId  String?   @unique
+  approvedAt        DateTime?
+  rejectedAt        DateTime?
+  rejectedReason    String?
+  promotedAt        DateTime?
+  reviewerId        String?
+  llmModel          String
+  llmPromptVersion  String
+  llmResponseRaw    String
+
+  @@index([status, createdAt])
+  @@index([niche, status])
+}
+
+model ScraperRun {
+  id                    String    @id @default(cuid())
+  startedAt             DateTime  @default(now())
+  completedAt           DateTime?
+  status                String
+  errorMessage          String?
+  niche                 String
+  itemsFetched          Int       @default(0)
+  candidatesAfterDedup  Int       @default(0)
+  draftId               String?   @unique
+  topScore              Float?
+  adapterStats          String
+
+  @@index([startedAt])
+  @@index([status])
+}
+
+model BlogPost {
+  // Read-only mirror of the website's BlogPost (only fields we read for dedup
+  // and for resolving internal-link suggestions). We don't write to it.
+  id           String    @id
+  slug         String    @unique
+  title        String
+  status       String
+  publishedAt  DateTime?
+
+  @@index([status, publishedAt])
+}
