@@ -1,0 +1,39 @@
+{
+  "name": "sba-content-scraper",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma generate && next build",
+    "start": "next start",
+    "lint": "next lint",
+    "postinstall": "prisma generate",
+    "dryrun": "tsx src/cron/runDaily.ts --dry-run"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "@libsql/client": "^0.17.2",
+    "@prisma/adapter-libsql": "^7.7.0",
+    "@prisma/client": "^7.7.0",
+    "@sparticuz/chromium-min": "^131.0.1",
+    "dotenv": "^16.4.5",
+    "googleapis": "^144.0.0",
+    "next": "14.2.35",
+    "playwright-core": "^1.49.1",
+    "prisma": "^7.7.0",
+    "react": "^18",
+    "react-dom": "^18",
+    "resend": "^6.10.0",
+    "snoowrap": "^1.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "@types/snoowrap": "^1.19.0",
+    "eslint": "^8",
+    "eslint-config-next": "14.2.35",
+    "tsx": "^4.19.2",
+    "typescript": "^5"
+  }
+}
