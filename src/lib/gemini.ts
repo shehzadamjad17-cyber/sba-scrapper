@@ -12,7 +12,11 @@ import { GoogleGenerativeAI, type SchemaType } from "@google/generative-ai";
 import { logger } from "./logger";
 
 export const GEMINI_GEN_MODEL = "gemini-2.5-flash";
-export const GEMINI_EMBED_MODEL = "text-embedding-004";
+// `text-embedding-004` returned 404 from v1beta — Google renamed the GA
+// embedding model to `gemini-embedding-001`. Both produce comparable
+// quality vectors; cosineSimilarity is dimension-agnostic so any dim works
+// as long as all calls go through this same function (they do).
+export const GEMINI_EMBED_MODEL = "gemini-embedding-001";
 const FREE_RPM_LIMIT = 10;
 
 interface KeyState {
@@ -105,8 +109,8 @@ export async function generateContent(opts: {
 }
 
 /**
- * Embed a single piece of text with text-embedding-004.
- * Returns a 768-dim vector.
+ * Embed a single piece of text with gemini-embedding-001.
+ * Returns a vector of the model's default dimensionality.
  */
 export async function embedContent(text: string): Promise<number[]> {
   const av = await waitForAvailableKey();
