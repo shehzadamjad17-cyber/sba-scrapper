@@ -27,7 +27,35 @@ import { persistDraft } from "@/pipeline/persist";
 import { sendFailureAlert } from "@/pipeline/alert";
 
 const MIN_TOTAL_SCORE = 0.4;
-const ADAPTERS: SourceAdapter[] = [redditAdapter, googlePaaAdapter, youtubeAdapter];
+
+/**
+ * Build the active adapter list at runtime.
+ *
+ * Reddit is OPTIONAL — included only when all three REDDIT_* env vars are
+ * present. This lets the scraper ship without a Reddit account (Reddit
+ * silently blocks app creation for new accounts, which can take days to
+ * unblock). To re-enable later, just add the 3 env vars to Vercel and
+ * redeploy — no code change needed.
+ *
+ * Google PAA and YouTube are always enabled.
+ *
+ * Called inside runDaily() (not at module top-level) so the env-var check
+ * happens AFTER dotenv loads .env.local for local CLI runs.
+ */
+function getAdapters(): SourceAdapter[] {
+  const adapters: SourceAdapter[] = [];
+  const hasReddit =
+    !!process.env.REDDIT_CLIENT_ID &&
+    !!process.env.REDDIT_CLIENT_SECRET &&
+    !!process.env.REDDIT_USER_AGENT;
+  if (hasReddit) {
+    adapters.push(redditAdapter);
+  } else {
+    logger.info("Reddit adapter disabled (REDDIT_* env vars not set)");
+  }
+  adapters.push(googlePaaAdapter, youtubeAdapter);
+  return adapters;
+}
 
 export interface RunResult {
   scraperRunId: string;
@@ -39,6 +67,9 @@ export interface RunResult {
 export async function runDaily(opts: { dryRun?: boolean } = {}): Promise<RunResult> {
   const niche: NicheConfig = CURRENT_NICHE;
   logger.info("Daily run starting", { niche: niche.displayName, dryRun: !!opts.dryRun });
+
+  const ADAPTERS = getAdapters();
+  logger.info("Active adapters", { count: ADAPTERS.length, types: ADAPTERS.map((a) => a.sourceType) });
 
   // 1. Open ScraperRun row
   const run = await prisma.scraperRun.create({
