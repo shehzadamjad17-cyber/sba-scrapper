@@ -24,9 +24,13 @@ describe("pickWinners", () => {
     expect(out.map((s) => s.candidate.questionText)).toEqual(["a", "b", "c"]);
   });
 
-  it("stops at minScore (list is sorted desc)", () => {
-    const out = pickWinners([sc("a", 0.5, "n1", [1, 0, 0]), sc("b", 0.3, "n2", [0, 1, 0])]);
-    expect(out).toHaveLength(1);
+  it("breaks (not continues) at first sub-minScore item — nothing after is picked", () => {
+    const out = pickWinners([
+      sc("a", 0.9, "n1", [1, 0, 0]),
+      sc("b", 0.3, "n2", [0, 1, 0]),
+      sc("c", 0.9, "n3", [0, 0, 1]), // would be picked by a buggy `continue`
+    ]);
+    expect(out.map((s) => s.candidate.questionText)).toEqual(["a"]);
   });
 
   it("caps 2 per niche", () => {
