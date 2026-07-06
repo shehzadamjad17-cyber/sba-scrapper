@@ -79,7 +79,7 @@ async function waitForAvailableKey(maxWaitMs: number = 65_000): Promise<{ key: s
  */
 export async function generateContent(opts: {
   prompt: string;
-  responseSchema: { type: SchemaType; properties: Record<string, unknown>; required?: string[] };
+  responseSchema: Record<string, unknown>;
   temperature?: number;
 }): Promise<{ raw: string; parsed: unknown }> {
   const av = await waitForAvailableKey();
@@ -150,5 +150,41 @@ export function centroid(vectors: number[][]): number[] {
     for (let i = 0; i < dim; i++) out[i] += v[i];
   }
   for (let i = 0; i < dim; i++) out[i] /= vectors.length;
+  return out;
+}
+
+/**
+ * Split an array into consecutive groups of ≤size (order preserved).
+ */
+export function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+const EMBED_BATCH_LIMIT = 100;
+
+/**
+ * Batch-embed texts via batchEmbedContents. One API request (= one
+ * rate-limit slot) per 100 texts instead of one per text. Order-preserving.
+ */
+export async function embedBatch(texts: string[]): Promise<number[][]> {
+  if (texts.length === 0) return [];
+  const out: number[][] = [];
+  for (const group of chunk(texts, EMBED_BATCH_LIMIT)) {
+    const av = await waitForAvailableKey();
+    recordCall(av.index);
+    const client = new GoogleGenerativeAI(av.key);
+    const model = client.getGenerativeModel({ model: GEMINI_EMBED_MODEL });
+    const res = await model.batchEmbedContents({
+      requests: group.map((text) => ({
+        content: { role: "user", parts: [{ text }] },
+      })),
+    });
+    for (const e of res.embeddings) out.push(e.values);
+  }
+  if (out.length !== texts.length) {
+    throw new Error(`embedBatch: expected ${texts.length} embeddings, got ${out.length}`);
+  }
   return out;
 }
