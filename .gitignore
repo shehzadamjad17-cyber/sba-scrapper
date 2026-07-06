@@ -8,3 +8,7 @@ node_modules/
 prisma/dev.db
 prisma/dev.db-journal
 scripts/
+
+# SDD scratch + build artifacts
+.superpowers/
+tsconfig.tsbuildinfo
