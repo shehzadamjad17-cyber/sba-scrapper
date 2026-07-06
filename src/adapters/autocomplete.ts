@@ -40,8 +40,10 @@ async function fetchSuggestions(seed: string): Promise<string[]> {
     headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
   });
   if (!res.ok) throw new Error(`autocomplete HTTP ${res.status}`);
-  const data = (await res.json()) as [string, string[]];
-  return Array.isArray(data[1]) ? data[1] : [];
+  const data = (await res.json()) as unknown;
+  return Array.isArray(data) && Array.isArray((data as unknown[])[1])
+    ? ((data as unknown[])[1] as string[])
+    : [];
 }
 
 export const autocompleteAdapter: SourceAdapter = {
