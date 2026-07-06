@@ -1,34 +1,38 @@
 /**
- * Score each candidate question:
+ * Score each candidate question (BATCHED — the 300s fix):
  *   totalScore = nicheMatch × intentScore × sourceWeight × engagementBoost
  *
- * - nicheMatch:    cosine sim between question embedding and centroid of niche.keywords
- *                  embeddings. Hard reject if < 0.3.
- * - intentScore:   Gemini micro-call ("rate 0-1 how strongly this person needs funding now")
- *                  cached per question text within this run.
- * - sourceWeight:  hard-coded per source (1.0 reddit, 1.5 paa, 0.7 youtube)
- * - engagementBoost: 1 + min(0.3, log10(max(1, engagement)) / 10)  (range [1, 1.3])
+ * - nicheMatch: max cosine sim between candidate embedding and each niche's
+ *   keyword-centroid; the argmax niche becomes assignedNicheSlug.
+ *   Hard reject if < 0.3.
+ * - intentScore: Gemini calls batched 25 questions at a time.
+ * - Embeddings: ALL via embedBatch (≤100/call). Candidate embeddings are
+ *   carried on ScoredCandidate so dedup/pick never re-embed.
  */
 import { SchemaType } from "@google/generative-ai";
-import { embedContent, cosineSimilarity, centroid, generateContent } from "@/lib/gemini";
+import { embedBatch, cosineSimilarity, centroid, generateContent } from "@/lib/gemini";
 import type { CandidateQuestion } from "@/adapters/types";
 import type { NicheConfig } from "@/lib/niche";
 import { logger } from "@/lib/logger";
 
 const NICHE_MATCH_HARD_THRESHOLD = 0.3;
+const INTENT_BATCH_SIZE = 25;
 
 export interface ScoredCandidate {
   candidate: CandidateQuestion;
+  embedding: number[];
   nicheMatch: number;
+  assignedNicheSlug: string;
   intentScore: number;
   sourceWeight: number;
   engagementBoost: number;
   totalScore: number;
 }
 
-const SOURCE_WEIGHTS: Record<CandidateQuestion["sourceType"], number> = {
+export const SOURCE_WEIGHTS: Record<CandidateQuestion["sourceType"], number> = {
   reddit: 1.0,
   google_paa: 1.5,
+  google_autocomplete: 1.2,
   youtube: 0.7,
 };
 
@@ -36,54 +40,93 @@ function engagementBoost(engagement: number): number {
   return 1 + Math.min(0.3, Math.log10(Math.max(1, engagement)) / 10);
 }
 
-async function buildNicheCentroid(niche: NicheConfig): Promise<number[]> {
-  const vectors: number[][] = [];
-  for (const kw of niche.keywords) {
-    vectors.push(await embedContent(kw));
+/** One centroid per niche; every keyword of every niche embedded in one batch. */
+async function buildNicheCentroids(
+  niches: NicheConfig[]
+): Promise<{ slug: string; vec: number[] }[]> {
+  const allKeywords = niches.flatMap((n) => n.keywords);
+  const vectors = await embedBatch(allKeywords);
+  const out: { slug: string; vec: number[] }[] = [];
+  let offset = 0;
+  for (const n of niches) {
+    out.push({ slug: n.slug, vec: centroid(vectors.slice(offset, offset + n.keywords.length)) });
+    offset += n.keywords.length;
   }
-  return centroid(vectors);
+  return out;
 }
 
-async function rateIntent(questionText: string): Promise<number> {
+/** Rate 0-1 purchase intent for a batch of questions in ONE Gemini call. */
+async function rateIntentBatch(questions: string[]): Promise<number[]> {
+  const numbered = questions.map((q, i) => `${i}. "${q}"`).join("\n");
   const { parsed } = await generateContent({
     prompt:
-      `On a scale of 0 to 1, how strongly does this question indicate someone is actively considering paying for business funding right now?\n\n` +
-      `Question: "${questionText}"\n\n` +
-      `Return JSON with a single field "intent" between 0 and 1.`,
+      `For each numbered question below, rate 0 to 1 how strongly it indicates a small business owner actively considering paying for business funding right now.\n\n` +
+      `${numbered}\n\n` +
+      `Return JSON: {"ratings":[{"index":<number>,"intent":<0..1>}, ...]} with one entry per question.`,
     responseSchema: {
       type: SchemaType.OBJECT,
-      properties: { intent: { type: SchemaType.NUMBER } },
-      required: ["intent"],
+      properties: {
+        ratings: {
+          type: SchemaType.ARRAY,
+          items: {
+            type: SchemaType.OBJECT,
+            properties: {
+              index: { type: SchemaType.NUMBER },
+              intent: { type: SchemaType.NUMBER },
+            },
+            required: ["index", "intent"],
+          },
+        },
+      },
+      required: ["ratings"],
     },
     temperature: 0,
   });
-  const intent = (parsed as { intent?: number }).intent;
-  if (typeof intent !== "number" || intent < 0 || intent > 1) return 0.5;
-  return intent;
+
+  const scores = new Array<number>(questions.length).fill(0.5);
+  const ratings = (parsed as { ratings?: { index?: number; intent?: number }[] }).ratings ?? [];
+  for (const r of ratings) {
+    if (
+      typeof r.index === "number" &&
+      typeof r.intent === "number" &&
+      r.index >= 0 &&
+      r.index < questions.length &&
+      r.intent >= 0 &&
+      r.intent <= 1
+    ) {
+      scores[r.index] = r.intent;
+    }
+  }
+  return scores;
 }
 
 export async function scoreCandidates(
   candidates: CandidateQuestion[],
-  niche: NicheConfig
+  niches: NicheConfig[]
 ): Promise<ScoredCandidate[]> {
   if (candidates.length === 0) return [];
 
-  // 1. Niche centroid (one embedding per keyword)
-  logger.info("Building niche centroid", { keywordCount: niche.keywords.length });
-  const nicheCentroidVec = await buildNicheCentroid(niche);
+  logger.info("Building niche centroids", { nicheCount: niches.length });
+  const centroids = await buildNicheCentroids(niches);
 
-  // 2. Embed each candidate, compute nicheMatch, hard-reject low-match ones
+  // Embed all candidates in one batch; argmax niche; hard-reject low match
+  const candidateVecs = await embedBatch(candidates.map((c) => c.questionText));
   const survivors: ScoredCandidate[] = [];
-  for (const c of candidates) {
-    const vec = await embedContent(c.questionText);
-    const nicheMatch = cosineSimilarity(vec, nicheCentroidVec);
-    if (nicheMatch < NICHE_MATCH_HARD_THRESHOLD) continue;
+  for (let i = 0; i < candidates.length; i++) {
+    let best = { slug: "", sim: -Infinity };
+    for (const c of centroids) {
+      const sim = cosineSimilarity(candidateVecs[i], c.vec);
+      if (sim > best.sim) best = { slug: c.slug, sim };
+    }
+    if (best.sim < NICHE_MATCH_HARD_THRESHOLD) continue;
     survivors.push({
-      candidate: c,
-      nicheMatch,
-      intentScore: 0, // filled in next step
-      sourceWeight: SOURCE_WEIGHTS[c.sourceType],
-      engagementBoost: engagementBoost(c.engagement),
+      candidate: candidates[i],
+      embedding: candidateVecs[i],
+      nicheMatch: best.sim,
+      assignedNicheSlug: best.slug,
+      intentScore: 0,
+      sourceWeight: SOURCE_WEIGHTS[candidates[i].sourceType],
+      engagementBoost: engagementBoost(candidates[i].engagement),
       totalScore: 0,
     });
   }
@@ -92,13 +135,16 @@ export async function scoreCandidates(
     survivors: survivors.length,
   });
 
-  // 3. Intent-score the survivors (one Gemini Flash call each)
-  for (const s of survivors) {
-    s.intentScore = await rateIntent(s.candidate.questionText);
-    s.totalScore = s.nicheMatch * s.intentScore * s.sourceWeight * s.engagementBoost;
+  // Intent-score survivors in batches of 25
+  for (let i = 0; i < survivors.length; i += INTENT_BATCH_SIZE) {
+    const batch = survivors.slice(i, i + INTENT_BATCH_SIZE);
+    const scores = await rateIntentBatch(batch.map((s) => s.candidate.questionText));
+    batch.forEach((s, j) => {
+      s.intentScore = scores[j];
+      s.totalScore = s.nicheMatch * s.intentScore * s.sourceWeight * s.engagementBoost;
+    });
   }
 
-  // 4. Sort descending by totalScore
   survivors.sort((a, b) => b.totalScore - a.totalScore);
   return survivors;
 }
