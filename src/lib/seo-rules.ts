@@ -122,8 +122,9 @@ export function validateArticle(
       if (!allowed.has(slug)) v.push(`internal link to unknown slug "${slug}" (hallucinated?)`);
     }
   }
-  if (!links.some((u) => MONEY_PAGES.some((m) => u === m || u.startsWith(`${m}?`))))
-    v.push(`missing money-page link (one of: ${MONEY_PAGES.join(", ")})`);
+  const isMoneyLink = (u: string) =>
+    MONEY_PAGES.some((m) => u === m || u.startsWith(`${m}?`) || u.startsWith(`${m}#`) || u.startsWith(`${m}/`));
+  if (!links.some(isMoneyLink)) v.push(`missing money-page link (one of: ${MONEY_PAGES.join(", ")})`);
   const external = links.filter((u) => /^https?:\/\//i.test(u));
   if (external.length > 2) v.push(`at most 2 external links (got ${external.length})`);
   for (const u of external) {

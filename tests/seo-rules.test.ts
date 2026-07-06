@@ -94,4 +94,12 @@ describe("validateArticle", () => {
     const noLinks = validateArticle(a, { allowedInternalSlugs: [] });
     expect(noLinks.violations).toEqual([]);
   });
+
+  it("accepts money links with anchor, trailing slash, or query suffixes", () => {
+    for (const variant of ["/apply#form", "/apply/", "/apply?src=blog"]) {
+      const a = valid();
+      a.body = a.body.replace("(/apply)", `(${variant})`);
+      expect(validateArticle(a, OPTS).violations).toEqual([]);
+    }
+  });
 });
