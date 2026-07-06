@@ -29,7 +29,7 @@ export const youtubeAdapter: SourceAdapter = {
   sourceType: "youtube",
   sourceWeight: 0.7,
 
-  async fetchQuestions(niche: NicheConfig): Promise<AdapterResult> {
+  async fetchQuestions(niches: NicheConfig[]): Promise<AdapterResult> {
     const errors: string[] = [];
     const questions: CandidateQuestion[] = [];
 
@@ -42,9 +42,11 @@ export const youtubeAdapter: SourceAdapter = {
       return { questions: [], errors: [msg] };
     }
 
-    for (const query of niche.youtubeSearches) {
+    const allKeywords = Array.from(new Set(niches.flatMap((n) => n.keywords)));
+    const allSearches = Array.from(new Set(niches.flatMap((n) => n.youtubeSearches)));
+
+    for (const query of allSearches) {
       try {
-        // 1) Search for top 5 videos matching the query
         const searchRes = await yt.search.list({
           q: query,
           part: ["snippet"],
@@ -58,7 +60,6 @@ export const youtubeAdapter: SourceAdapter = {
           .map((v) => v.id?.videoId)
           .filter((id): id is string => Boolean(id));
 
-        // 2) For each video, fetch top 20 comments by relevance
         for (const videoId of videoIds) {
           try {
             const commentsRes = await yt.commentThreads.list({
@@ -75,7 +76,7 @@ export const youtubeAdapter: SourceAdapter = {
               if (!top) continue;
               const text = (top.textDisplay ?? "").trim();
               if (!text.includes("?")) continue;
-              if (!matchesKeyword(text, niche.keywords)) continue;
+              if (!matchesKeyword(text, allKeywords)) continue;
 
               questions.push({
                 sourceType: "youtube",

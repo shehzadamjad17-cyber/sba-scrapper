@@ -4,7 +4,7 @@
 
 import type { NicheConfig } from "@/lib/niche";
 
-export type SourceType = "reddit" | "google_paa" | "youtube";
+export type SourceType = "reddit" | "google_paa" | "youtube" | "google_autocomplete";
 
 export interface CandidateQuestion {
   sourceType: SourceType;
@@ -22,6 +22,7 @@ export interface AdapterResult {
 
 export interface SourceAdapter {
   sourceType: SourceType;
-  sourceWeight: number;          // 1.0 (reddit), 1.5 (paa), 0.7 (youtube)
-  fetchQuestions(niche: NicheConfig): Promise<AdapterResult>;
+  sourceWeight: number;          // 1.0 reddit, 1.5 paa, 1.2 autocomplete, 0.7 youtube
+  /** Mine ALL niches in one call so heavyweight resources (e.g. the PAA browser) are shared. */
+  fetchQuestions(niches: NicheConfig[]): Promise<AdapterResult>;
 }

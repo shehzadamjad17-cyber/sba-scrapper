@@ -64,7 +64,7 @@ export const googlePaaAdapter: SourceAdapter = {
   sourceType: "google_paa",
   sourceWeight: 1.5,
 
-  async fetchQuestions(niche: NicheConfig): Promise<AdapterResult> {
+  async fetchQuestions(niches: NicheConfig[]): Promise<AdapterResult> {
     const errors: string[] = [];
     const questions: CandidateQuestion[] = [];
 
@@ -77,27 +77,29 @@ export const googlePaaAdapter: SourceAdapter = {
         viewport: { width: 1280, height: 800 },
       });
 
-      for (const seed of niche.paaSeeds) {
-        const page = await ctx.newPage();
-        try {
-          const paas = await fetchPaaForSeed(page, seed);
-          for (const text of paas) {
-            questions.push({
-              sourceType: "google_paa",
-              sourceUrl: `https://www.google.com/search?q=${encodeURIComponent(seed)}`,
-              questionText: text,
-              contextSnippet: `Seed query: "${seed}". Surfaced in Google's "People also ask" panel.`,
-              engagement: 0,
-              capturedAt: new Date(),
-            });
+      for (const niche of niches) {
+        for (const seed of niche.paaSeeds) {
+          const page = await ctx.newPage();
+          try {
+            const paas = await fetchPaaForSeed(page, seed);
+            for (const text of paas) {
+              questions.push({
+                sourceType: "google_paa",
+                sourceUrl: `https://www.google.com/search?q=${encodeURIComponent(seed)}`,
+                questionText: text,
+                contextSnippet: `Seed query: "${seed}". Surfaced in Google's "People also ask" panel.`,
+                engagement: 0,
+                capturedAt: new Date(),
+              });
+            }
+            logger.info("PAA fetched", { seed, count: paas.length });
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            errors.push(`seed "${seed}": ${msg}`);
+            logger.warn("PAA seed fetch failed", { seed, error: msg });
+          } finally {
+            await page.close();
           }
-          logger.info("PAA fetched", { seed, count: paas.length });
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          errors.push(`seed "${seed}": ${msg}`);
-          logger.warn("PAA seed fetch failed", { seed, error: msg });
-        } finally {
-          await page.close();
         }
       }
     } catch (err) {

@@ -44,7 +44,7 @@ export const redditAdapter: SourceAdapter = {
   sourceType: "reddit",
   sourceWeight: 1.0,
 
-  async fetchQuestions(niche: NicheConfig): Promise<AdapterResult> {
+  async fetchQuestions(niches: NicheConfig[]): Promise<AdapterResult> {
     const errors: string[] = [];
     const questions: CandidateQuestion[] = [];
 
@@ -57,9 +57,11 @@ export const redditAdapter: SourceAdapter = {
       return { questions: [], errors: [msg] };
     }
 
-    for (const subName of niche.subreddits) {
+    const allSubreddits = Array.from(new Set(niches.flatMap((n) => n.subreddits)));
+    const allKeywords = Array.from(new Set(niches.flatMap((n) => n.keywords)));
+
+    for (const subName of allSubreddits) {
       try {
-        // .new fetches the most recently submitted posts (limit 100)
         const sub = client.getSubreddit(subName);
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const posts: any[] = await sub.getNew({ limit: 100 });
@@ -67,7 +69,7 @@ export const redditAdapter: SourceAdapter = {
         for (const p of posts) {
           const title: string = p.title ?? "";
           if (!title.includes("?")) continue;
-          if (!matchesKeyword(title, niche.keywords)) continue;
+          if (!matchesKeyword(title, allKeywords)) continue;
 
           questions.push({
             sourceType: "reddit",
