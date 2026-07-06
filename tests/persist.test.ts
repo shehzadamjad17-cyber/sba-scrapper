@@ -10,7 +10,16 @@ vi.mock("@/lib/db", () => ({
   },
 }));
 
+vi.mock("@/lib/logger", () => ({
+  logger: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
 import { prisma } from "@/lib/db";
+import { logger } from "@/lib/logger";
 import { persistArticle } from "@/pipeline/persist";
 
 const winner: ScoredCandidate = {
@@ -86,5 +95,24 @@ describe("persistArticle", () => {
   it("throws when SCRAPER_AUTHOR_ID missing", async () => {
     delete process.env.SCRAPER_AUTHOR_ID;
     await expect(persistArticle({ winner, gen, niche })).rejects.toThrow(/SCRAPER_AUTHOR_ID/);
+  });
+
+  it("logs orphaned BlogPost and rethrows when BlogDraft provenance write fails", async () => {
+    const dbError = new Error("connection lost");
+    vi.mocked(prisma.blogDraft.create).mockReset().mockRejectedValue(dbError);
+
+    await expect(persistArticle({ winner, gen, niche })).rejects.toThrow("connection lost");
+
+    expect(logger.error).toHaveBeenCalledWith(
+      "BlogDraft provenance write failed — orphaned BlogPost",
+      expect.objectContaining({ blogPostId: "post1", slug: "my-article", error: "connection lost" })
+    );
+  });
+
+  it("throws after exactly 10 findUnique lookups when no slug is ever free", async () => {
+    vi.mocked(prisma.blogPost.findUnique).mockReset().mockResolvedValue({ id: "taken" } as never);
+
+    await expect(persistArticle({ winner, gen, niche })).rejects.toThrow(/after 10 attempts/);
+    expect(prisma.blogPost.findUnique).toHaveBeenCalledTimes(10);
   });
 });

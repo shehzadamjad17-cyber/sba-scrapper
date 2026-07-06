@@ -15,11 +15,10 @@ import type { NicheConfig } from "@/lib/niche";
 const MAX_SLUG_ATTEMPTS = 10;
 
 async function resolveSlug(base: string): Promise<string> {
-  let slug = base;
-  for (let n = 2; n <= MAX_SLUG_ATTEMPTS + 1; n++) {
+  for (let attempt = 1; attempt <= MAX_SLUG_ATTEMPTS; attempt++) {
+    const slug = attempt === 1 ? base : `${base}-${attempt}`;
     const existing = await prisma.blogPost.findUnique({ where: { slug }, select: { id: true } });
     if (!existing) return slug;
-    slug = `${base}-${n}`;
   }
   throw new Error(`Could not find a free slug for "${base}" after ${MAX_SLUG_ATTEMPTS} attempts`);
 }
@@ -69,32 +68,42 @@ export async function persistArticle(opts: {
     },
   });
 
-  const draft = await prisma.blogDraft.create({
-    data: {
-      sourceType: winner.candidate.sourceType,
-      sourceUrl: winner.candidate.sourceUrl,
-      sourceQuestion: winner.candidate.questionText,
-      niche: niche.displayName,
-      title: gen.article.title,
-      titleVariants: "[]",
-      clearAnswer: firstParagraph(gen.article.body),
-      bodyOutline: gen.article.body,
-      comparisonTable: "[]",
-      faqSection: "[]",
-      internalLinks: "[]",
-      ctaBlock: niche.ctaPath,
-      imagePrompt: coverImage,
-      intentScore: winner.intentScore,
-      nicheMatch: winner.nicheMatch,
-      totalScore: winner.totalScore,
-      status: "promoted",
-      promotedToPostId: post.id,
-      promotedAt: new Date(),
-      llmModel: gen.llmModel,
-      llmPromptVersion: gen.llmPromptVersion,
-      llmResponseRaw: gen.llmResponseRaw,
-    },
-  });
+  let draft;
+  try {
+    draft = await prisma.blogDraft.create({
+      data: {
+        sourceType: winner.candidate.sourceType,
+        sourceUrl: winner.candidate.sourceUrl,
+        sourceQuestion: winner.candidate.questionText,
+        niche: niche.displayName,
+        title: gen.article.title,
+        titleVariants: "[]",
+        clearAnswer: firstParagraph(gen.article.body),
+        bodyOutline: gen.article.body,
+        comparisonTable: "[]",
+        faqSection: "[]",
+        internalLinks: "[]",
+        ctaBlock: niche.ctaPath,
+        imagePrompt: coverImage,
+        intentScore: winner.intentScore,
+        nicheMatch: winner.nicheMatch,
+        totalScore: winner.totalScore,
+        status: "promoted",
+        promotedToPostId: post.id,
+        promotedAt: new Date(),
+        llmModel: gen.llmModel,
+        llmPromptVersion: gen.llmPromptVersion,
+        llmResponseRaw: gen.llmResponseRaw,
+      },
+    });
+  } catch (error) {
+    logger.error("BlogDraft provenance write failed — orphaned BlogPost", {
+      blogPostId: post.id,
+      slug,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 
   logger.info("Article persisted", { blogPostId: post.id, blogDraftId: draft.id, slug });
   return { blogPostId: post.id, blogDraftId: draft.id, slug };
