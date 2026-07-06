@@ -8,7 +8,7 @@
  * Reads GEMINI_API_KEYS env var (CSV of keys, e.g. "key1,key2,key3").
  * Each key gets 10 RPM (free tier). 5 keys = 50 RPM total.
  */
-import { GoogleGenerativeAI, type SchemaType } from "@google/generative-ai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { logger } from "./logger";
 
 export const GEMINI_GEN_MODEL = "gemini-2.5-flash";

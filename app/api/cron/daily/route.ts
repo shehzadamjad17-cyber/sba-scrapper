@@ -2,9 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { runDaily } from "@/cron/runDaily";
 
 export const runtime = "nodejs";
-// 300 seconds = Vercel Pro limit. The scoring step makes a Gemini micro-call
-// per candidate (~85 candidates × 1-2s each = 85-170s) which exceeds the
-// Hobby 60s ceiling. Pro plan is required.
+// 300 seconds — Vercel Pro. The run mines 4 niches, makes ~12-18 batched
+// Gemini calls, and generates up to 3 full articles in parallel (~2-3.5 min).
 export const maxDuration = 300;
 
 export async function GET(request: NextRequest) {
@@ -18,6 +17,11 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const result = await runDaily();
+  const url = new URL(request.url);
+  const dryRun = url.searchParams.get("dryRun") === "1";
+  const maxRaw = parseInt(url.searchParams.get("max") ?? "", 10);
+  const max = Number.isFinite(maxRaw) ? maxRaw : undefined;
+
+  const result = await runDaily({ dryRun, max });
   return NextResponse.json(result);
 }

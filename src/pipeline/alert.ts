@@ -51,3 +51,58 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
 }
+
+export interface DigestArticle {
+  title: string;
+  niche: string;
+  totalScore: number;
+  blogPostId: string;
+  slug: string;
+}
+
+export function buildDigestHtml(articles: DigestArticle[]): string {
+  const base = (process.env.SITE_PUBLIC_URL ?? "").replace(/\/$/, "");
+  const rows = articles
+    .map(
+      (a) => `
+      <tr>
+        <td style="padding:8px;border-bottom:1px solid #eee;">
+          <strong>${escapeHtml(a.title)}</strong><br/>
+          <span style="color:#666;font-size:12px;">${escapeHtml(a.niche)} · score ${a.totalScore.toFixed(2)}</span>
+        </td>
+        <td style="padding:8px;border-bottom:1px solid #eee;white-space:nowrap;">
+          <a href="${base}/admin/blog/${a.blogPostId}/edit">Review &amp; publish</a><br/>
+          <a href="${base}/blog/${a.slug}?preview=1" style="font-size:12px;">Preview</a>
+        </td>
+      </tr>`
+    )
+    .join("");
+  return `
+    <p>The scraper created <strong>${articles.length}</strong> draft article(s) ready for review:</p>
+    <table style="border-collapse:collapse;width:100%;">${rows}</table>
+    <p style="color:#666;font-size:12px;">Review each draft, adjust anything you like, and click Publish.</p>
+  `;
+}
+
+export async function sendSuccessDigest(articles: DigestArticle[]): Promise<void> {
+  const apiKey = process.env.RESEND_API_KEY;
+  const to = process.env.SCRAPER_ALERT_EMAIL;
+  if (!apiKey || !to) {
+    logger.warn("Cannot send success digest — missing RESEND_API_KEY or SCRAPER_ALERT_EMAIL");
+    return;
+  }
+  const resend = new Resend(apiKey);
+  try {
+    await resend.emails.send({
+      from: "SBA Content Scraper <noreply@sbaloanoptions.com>",
+      to,
+      subject: `[scraper] ${articles.length} draft(s) ready for review`,
+      html: buildDigestHtml(articles),
+    });
+    logger.info("Success digest sent", { to, count: articles.length });
+  } catch (err) {
+    logger.error("Failed to send success digest", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}

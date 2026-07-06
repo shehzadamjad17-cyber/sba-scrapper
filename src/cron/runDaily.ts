@@ -2,46 +2,38 @@
  * Orchestrator for the daily scraper run.
  *
  * Flow:
+ *   0. Self-heal orphaned ScraperRun rows (status="running" >1h old)
  *   1. Open ScraperRun row (status="running")
- *   2. Fetch candidates from all source adapters in parallel
- *   3. Score candidates (niche match + intent + source weight + engagement)
- *   4. Dedup against last 60 days of BlogPost + BlogDraft titles
- *   5. Pick the highest-scoring candidate above MIN_TOTAL_SCORE
- *   6. Generate the outline via Gemini 2.5 Flash
- *   7. Persist BlogDraft + close ScraperRun row
+ *   2. Mine candidates: all adapters × all 4 niches (75s cap per adapter)
+ *   3. Score (batched embeddings + batched intent, niche argmax)
+ *   4. Dedup vs recent titles (reusing embeddings)
+ *   5. Pick winners: top ≤3, ≥0.4, ≤2/niche, pairwise-distinct
+ *   6. Generate full articles IN PARALLEL, each validated (retry once)
+ *   7. Persist each: BlogPost(draft) + BlogDraft(promoted)
+ *   8. Close run + success digest / failure alert
  *
- * On any caught error: ScraperRun.status="failed" + Resend alert.
- * On no winner: ScraperRun.status="no_question_picked" (no email — expected).
+ * Fail-soft: adapter errors and single-article failures never kill the run.
+ * Run fails only on infrastructure errors or when ALL picked articles fail.
  */
 import { prisma } from "@/lib/db";
-import { CURRENT_NICHE, type NicheConfig } from "@/lib/niche";
+import { NICHES, type NicheConfig } from "@/lib/niche";
 import { logger } from "@/lib/logger";
 import { redditAdapter } from "@/adapters/reddit";
 import { googlePaaAdapter } from "@/adapters/google-paa";
 import { youtubeAdapter } from "@/adapters/youtube";
+import { autocompleteAdapter } from "@/adapters/autocomplete";
 import type { SourceAdapter, AdapterResult } from "@/adapters/types";
-import { scoreCandidates } from "@/pipeline/score";
+import { scoreCandidates, type ScoredCandidate } from "@/pipeline/score";
 import { dedupCandidates } from "@/pipeline/dedup";
-import { generateOutline } from "@/pipeline/outline";
-import { persistDraft } from "@/pipeline/persist";
-import { sendFailureAlert } from "@/pipeline/alert";
+import { pickWinners } from "@/pipeline/pick";
+import { buildLinkMenu, generateArticle } from "@/pipeline/article";
+import { persistArticle } from "@/pipeline/persist";
+import { sendFailureAlert, sendSuccessDigest, type DigestArticle } from "@/pipeline/alert";
 
-const MIN_TOTAL_SCORE = 0.4;
+const ADAPTER_TIMEOUT_MS = 75_000;
+const ORPHAN_AGE_MS = 60 * 60 * 1000;
+const DEFAULT_MAX_ARTICLES = 3;
 
-/**
- * Build the active adapter list at runtime.
- *
- * Reddit is OPTIONAL — included only when all three REDDIT_* env vars are
- * present. This lets the scraper ship without a Reddit account (Reddit
- * silently blocks app creation for new accounts, which can take days to
- * unblock). To re-enable later, just add the 3 env vars to Vercel and
- * redeploy — no code change needed.
- *
- * Google PAA and YouTube are always enabled.
- *
- * Called inside runDaily() (not at module top-level) so the env-var check
- * happens AFTER dotenv loads .env.local for local CLI runs.
- */
 function getAdapters(): SourceAdapter[] {
   const adapters: SourceAdapter[] = [];
   const hasReddit =
@@ -53,46 +45,72 @@ function getAdapters(): SourceAdapter[] {
   } else {
     logger.info("Reddit adapter disabled (REDDIT_* env vars not set)");
   }
-  adapters.push(googlePaaAdapter, youtubeAdapter);
+  adapters.push(googlePaaAdapter, autocompleteAdapter, youtubeAdapter);
   return adapters;
+}
+
+async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  try {
+    return await Promise.race([p, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 export interface RunResult {
   scraperRunId: string;
   status: "succeeded" | "no_question_picked" | "failed";
-  draftId?: string;
+  articles: { blogPostId: string; blogDraftId: string; slug: string; niche: string }[];
   errorMessage?: string;
 }
 
-export async function runDaily(opts: { dryRun?: boolean } = {}): Promise<RunResult> {
-  const niche: NicheConfig = CURRENT_NICHE;
-  logger.info("Daily run starting", { niche: niche.displayName, dryRun: !!opts.dryRun });
+export async function runDaily(
+  opts: { dryRun?: boolean; max?: number } = {}
+): Promise<RunResult> {
+  const maxArticles = Math.min(Math.max(opts.max ?? DEFAULT_MAX_ARTICLES, 1), DEFAULT_MAX_ARTICLES);
+  logger.info("Daily run starting", {
+    niches: NICHES.map((n) => n.slug),
+    dryRun: !!opts.dryRun,
+    maxArticles,
+  });
+
+  // 0. Self-heal orphaned runs (also cleans historical stale rows)
+  const healed = await prisma.scraperRun.updateMany({
+    where: { status: "running", startedAt: { lt: new Date(Date.now() - ORPHAN_AGE_MS) } },
+    data: { status: "failed", errorMessage: "orphaned (self-heal)", completedAt: new Date() },
+  });
+  if (healed.count > 0) logger.warn("Self-healed orphaned runs", { count: healed.count });
 
   const ADAPTERS = getAdapters();
-  logger.info("Active adapters", { count: ADAPTERS.length, types: ADAPTERS.map((a) => a.sourceType) });
 
   // 1. Open ScraperRun row
   const run = await prisma.scraperRun.create({
     data: {
       status: "running",
-      niche: niche.displayName,
+      niche: NICHES.map((n) => n.slug).join(","),
       adapterStats: JSON.stringify({}),
     },
   });
 
   try {
-    // 2. Fetch from every adapter in parallel
+    // 2. Mine from every adapter in parallel (all niches per adapter, 75s cap)
     const fetchResults: { adapter: SourceAdapter; result: AdapterResult }[] = await Promise.all(
       ADAPTERS.map(async (a) => ({
         adapter: a,
-        result: await a.fetchQuestions(niche).catch((err): AdapterResult => ({
-          questions: [],
-          errors: [err instanceof Error ? err.message : String(err)],
-        })),
+        result: await withTimeout(a.fetchQuestions(NICHES), ADAPTER_TIMEOUT_MS, a.sourceType).catch(
+          (err): AdapterResult => ({
+            questions: [],
+            errors: [err instanceof Error ? err.message : String(err)],
+          })
+        ),
       }))
     );
     const allCandidates = fetchResults.flatMap((r) => r.result.questions);
-    const adapterStats = Object.fromEntries(
+    const adapterStats: Record<string, unknown> = Object.fromEntries(
       fetchResults.map((r) => [
         r.adapter.sourceType,
         { fetched: r.result.questions.length, errored: r.result.errors.length, errors: r.result.errors },
@@ -100,28 +118,12 @@ export async function runDaily(opts: { dryRun?: boolean } = {}): Promise<RunResu
     );
     logger.info("Adapters complete", { totalCandidates: allCandidates.length, adapterStats });
 
-    if (allCandidates.length === 0) {
-      await prisma.scraperRun.update({
-        where: { id: run.id },
-        data: {
-          status: "no_question_picked",
-          completedAt: new Date(),
-          itemsFetched: 0,
-          adapterStats: JSON.stringify(adapterStats),
-        },
-      });
-      return { scraperRunId: run.id, status: "no_question_picked" };
-    }
-
-    // 3. Score
-    const scored = await scoreCandidates(allCandidates, niche);
-
-    // 4. Dedup
+    // 3-5. Score → dedup → pick
+    const scored = allCandidates.length > 0 ? await scoreCandidates(allCandidates, NICHES) : [];
     const survivors = await dedupCandidates(scored);
+    const winners = pickWinners(survivors, { max: maxArticles });
 
-    // 5. Pick winner
-    const winner = survivors.find((s) => s.totalScore >= MIN_TOTAL_SCORE) ?? null;
-    if (!winner) {
+    if (winners.length === 0) {
       await prisma.scraperRun.update({
         where: { id: run.id },
         data: {
@@ -133,20 +135,19 @@ export async function runDaily(opts: { dryRun?: boolean } = {}): Promise<RunResu
           adapterStats: JSON.stringify(adapterStats),
         },
       });
-      logger.info("No question above MIN_TOTAL_SCORE — quiet exit", {
+      logger.info("No winners — quiet exit", {
         topScoreSeen: survivors[0]?.totalScore?.toFixed(3) ?? "(none)",
       });
-      return { scraperRunId: run.id, status: "no_question_picked" };
+      return { scraperRunId: run.id, status: "no_question_picked", articles: [] };
     }
 
-    logger.info("Winner picked", {
-      question: winner.candidate.questionText.slice(0, 80),
-      totalScore: winner.totalScore.toFixed(3),
+    logger.info("Winners picked", {
+      count: winners.length,
+      questions: winners.map((w) => w.candidate.questionText.slice(0, 60)),
     });
 
-    // 6. Generate outline (skip if dry-run)
+    // Dry-run: stop before any Gemini generation / DB writes
     if (opts.dryRun) {
-      logger.info("[dry-run] Would call Gemini and persist BlogDraft, exiting early");
       await prisma.scraperRun.update({
         where: { id: run.id },
         data: {
@@ -154,58 +155,127 @@ export async function runDaily(opts: { dryRun?: boolean } = {}): Promise<RunResu
           completedAt: new Date(),
           itemsFetched: allCandidates.length,
           candidatesAfterDedup: survivors.length,
-          topScore: winner.totalScore,
+          topScore: winners[0].totalScore,
           adapterStats: JSON.stringify({ ...adapterStats, _dryRun: true }),
         },
       });
-      return { scraperRunId: run.id, status: "succeeded" };
+      return { scraperRunId: run.id, status: "succeeded", articles: [] };
     }
 
-    const outline = await generateOutline(winner, niche);
+    // 6-7. Generate + persist each winner IN PARALLEL, fail-soft per article
+    const nicheBySlug = new Map<string, NicheConfig>(NICHES.map((n) => [n.slug, n]));
+    const settled = await Promise.all(
+      winners.map(async (winner: ScoredCandidate) => {
+        try {
+          const niche = nicheBySlug.get(winner.assignedNicheSlug);
+          if (!niche) throw new Error(`Unknown niche slug "${winner.assignedNicheSlug}"`);
+          const menu = await buildLinkMenu(winner.embedding);
+          const gen = await generateArticle(winner, niche, menu);
+          const ids = await persistArticle({ winner, gen, niche });
+          return { ok: true as const, winner, niche, gen, ids };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          logger.error("Article failed", {
+            question: winner.candidate.questionText.slice(0, 80),
+            error: message,
+          });
+          return { ok: false as const, winner, error: message };
+        }
+      })
+    );
 
-    // Update itemsFetched + candidatesAfterDedup BEFORE persistDraft so the
-    // numbers are stored even if the persistDraft fails partway
+    const created = settled.filter((s) => s.ok);
+    const skipped = settled.filter((s) => !s.ok);
+    const articles = created.map((s) => ({
+      blogPostId: s.ids.blogPostId,
+      blogDraftId: s.ids.blogDraftId,
+      slug: s.ids.slug,
+      niche: s.niche.slug,
+    }));
+
+    const finalStats = JSON.stringify({
+      ...adapterStats,
+      articles: created.map((s) => ({
+        blogDraftId: s.ids.blogDraftId,
+        blogPostId: s.ids.blogPostId,
+        slug: s.ids.slug,
+        niche: s.niche.slug,
+        totalScore: s.winner.totalScore,
+      })),
+      skipped: skipped.map((s) => ({
+        question: s.winner.candidate.questionText.slice(0, 120),
+        reason: s.error,
+      })),
+    });
+
+    if (created.length === 0) {
+      const errorMessage = `All ${winners.length} article(s) failed: ${skipped
+        .map((s) => s.error)
+        .join(" | ")}`;
+      await prisma.scraperRun.update({
+        where: { id: run.id },
+        data: {
+          status: "failed",
+          completedAt: new Date(),
+          errorMessage,
+          itemsFetched: allCandidates.length,
+          candidatesAfterDedup: survivors.length,
+          adapterStats: finalStats,
+        },
+      });
+      await sendFailureAlert({
+        niche: NICHES.map((n) => n.slug).join(","),
+        errorMessage,
+        scraperRunId: run.id,
+      });
+      return { scraperRunId: run.id, status: "failed", articles: [], errorMessage };
+    }
+
+    // 8. Close run + digest
     await prisma.scraperRun.update({
       where: { id: run.id },
       data: {
+        status: "succeeded",
+        completedAt: new Date(),
         itemsFetched: allCandidates.length,
         candidatesAfterDedup: survivors.length,
-        adapterStats: JSON.stringify(adapterStats),
+        draftId: created[0].ids.blogDraftId,
+        topScore: created[0].winner.totalScore,
+        adapterStats: finalStats,
       },
     });
 
-    // 7. Persist
-    const { draftId } = await persistDraft({
-      scraperRunId: run.id,
-      winner,
-      outline,
-      niche,
-    });
+    const digest: DigestArticle[] = created.map((s) => ({
+      title: s.gen.article.title,
+      niche: s.niche.displayName,
+      totalScore: s.winner.totalScore,
+      blogPostId: s.ids.blogPostId,
+      slug: s.ids.slug,
+    }));
+    await sendSuccessDigest(digest);
 
-    logger.info("Run complete", { scraperRunId: run.id, draftId });
-    return { scraperRunId: run.id, status: "succeeded", draftId };
+    logger.info("Run complete", { scraperRunId: run.id, created: created.length, skipped: skipped.length });
+    return { scraperRunId: run.id, status: "succeeded", articles };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error("Daily run failed", { error: message });
 
     await prisma.scraperRun.update({
       where: { id: run.id },
-      data: {
-        status: "failed",
-        completedAt: new Date(),
-        errorMessage: message,
-      },
+      data: { status: "failed", completedAt: new Date(), errorMessage: message },
     });
-
-    await sendFailureAlert({ niche: niche.displayName, errorMessage: message, scraperRunId: run.id });
-    return { scraperRunId: run.id, status: "failed", errorMessage: message };
+    await sendFailureAlert({
+      niche: NICHES.map((n) => n.slug).join(","),
+      errorMessage: message,
+      scraperRunId: run.id,
+    });
+    return { scraperRunId: run.id, status: "failed", articles: [], errorMessage: message };
   }
 }
 
 // CLI dry-run support: `npm run dryrun`
 if (process.argv[1]?.endsWith("runDaily.ts") || process.argv[1]?.endsWith("runDaily.js")) {
   const dryRun = process.argv.includes("--dry-run");
-  // Load .env.local for local dev
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const dotenv = require("dotenv");
   dotenv.config({ path: ".env.local" });

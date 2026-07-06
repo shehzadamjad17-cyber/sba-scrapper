@@ -58,13 +58,22 @@ model ScraperRun {
 }
 
 model BlogPost {
-  // Read-only mirror of the website's BlogPost (only fields we read for dedup
-  // and for resolving internal-link suggestions). We don't write to it.
-  id           String    @id
+  // Mirror of the website's BlogPost table (same Turso DB). The scraper
+  // writes drafts here directly (see src/pipeline/persist.ts) in addition to
+  // reading titles for dedup and link-menu suggestions — field set must stay
+  // in sync with the website's prisma/schema.prisma BlogPost model.
+  id           String    @id @default(cuid())
   slug         String    @unique
   title        String
-  status       String
+  excerpt      String
+  coverImage   String
+  body         String
+  status       String    @default("draft")
   publishedAt  DateTime?
+  authorId     String
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   @@index([status, publishedAt])
+  @@index([authorId])
 }
