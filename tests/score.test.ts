@@ -63,11 +63,12 @@ describe("scoreCandidates", () => {
       .mockResolvedValueOnce([[1, 0], [0, 1]])
       .mockResolvedValueOnce([[1, 0], [0.9, 0.1]]);
     vi.mocked(generateContent).mockResolvedValue({
-      raw: "", parsed: { ratings: [{ index: 0, intent: 0.9 }] }, // index 1 missing
+      raw: "", parsed: { ratings: [{ index: 1, intent: 0.9 }] }, // index 0 missing, defaults to 0.5
     });
     const out = await scoreCandidates([q("one"), q("two")], [nicheA, nicheB]);
+    expect(out[0].candidate.questionText).toBe("two");
     expect(out[0].intentScore).toBe(0.9);
     expect(out[1].intentScore).toBe(0.5);
-    expect(out[0].totalScore).toBeGreaterThanOrEqual(out[1].totalScore);
+    expect(out[0].totalScore).toBeGreaterThan(out[1].totalScore);
   });
 });
