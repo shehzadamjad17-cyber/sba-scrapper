@@ -138,4 +138,37 @@ describe("runDaily", () => {
     await runDaily({ max: 1 });
     expect(pickWinners).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ max: 1 }));
   });
+
+  it("dryRun stops before generation and marks run succeeded", async () => {
+    const winners = [sc("w1", "mca-debt-relief")];
+    vi.mocked(scoreCandidates).mockResolvedValue(winners);
+    vi.mocked(dedupCandidates).mockResolvedValue(winners);
+    vi.mocked(pickWinners).mockReturnValue(winners);
+
+    const out = await runDaily({ dryRun: true });
+
+    expect(out.status).toBe("succeeded");
+    expect(out.articles).toEqual([]);
+    expect(generateArticle).not.toHaveBeenCalled();
+    expect(persistArticle).not.toHaveBeenCalled();
+    expect(sendSuccessDigest).not.toHaveBeenCalled();
+    // run row closed as succeeded with the _dryRun flag in adapterStats
+    const updateCalls = vi.mocked(prisma.scraperRun.update).mock.calls;
+    const finalUpdate = updateCalls[updateCalls.length - 1][0] as { data: { status: string; adapterStats: string } };
+    expect(finalUpdate.data.status).toBe("succeeded");
+    expect(finalUpdate.data.adapterStats).toContain("_dryRun");
+  });
+
+  it("marks run failed and alerts when a pipeline stage throws", async () => {
+    vi.mocked(scoreCandidates).mockRejectedValue(new Error("turso unreachable"));
+
+    const out = await runDaily();
+
+    expect(out.status).toBe("failed");
+    expect(out.errorMessage).toContain("turso unreachable");
+    expect(sendFailureAlert).toHaveBeenCalledOnce();
+    const updateCalls = vi.mocked(prisma.scraperRun.update).mock.calls;
+    const finalUpdate = updateCalls[updateCalls.length - 1][0] as { data: { status: string } };
+    expect(finalUpdate.data.status).toBe("failed");
+  });
 });
