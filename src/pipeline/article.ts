@@ -10,7 +10,7 @@ import { SchemaType } from "@google/generative-ai";
 import { generateContent, embedBatch, cosineSimilarity, GEMINI_GEN_MODEL } from "@/lib/gemini";
 import { prisma } from "@/lib/db";
 import { logger } from "@/lib/logger";
-import { SEO_RULES_PROMPT, validateArticle, type GeneratedArticle } from "@/lib/seo-rules";
+import { SEO_RULES_PROMPT, validateArticle, normalizeExcerpt, type GeneratedArticle } from "@/lib/seo-rules";
 import type { ScoredCandidate } from "./score";
 import type { NicheConfig } from "@/lib/niche";
 
@@ -113,6 +113,7 @@ export async function generateArticle(
     });
 
     const article = parsed as GeneratedArticle;
+    article.excerpt = normalizeExcerpt(article.excerpt ?? "");
     const result = validateArticle(article, { allowedInternalSlugs });
     if (result.ok) {
       return {

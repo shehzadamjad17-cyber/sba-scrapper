@@ -29,7 +29,28 @@ export const FORBIDDEN_PHRASES = [
 ];
 
 const WORD_MIN = 1200;
-const WORD_MAX = 1800;
+// Prompt targets 2,200 so the model has headroom before this hard cap —
+// first prod run produced a good 2,066-word article that the old 1,800
+// cap rejected twice (wasted both attempts).
+const WORD_MAX = 2400;
+
+const EXCERPT_MAX = 155;
+const EXCERPT_MIN = 120;
+
+/**
+ * Collapse whitespace and hard-truncate overlong excerpts at a word
+ * boundary (mechanical fix — the model habitually overshoots by ~20-30
+ * chars, and rejecting for that wastes a full generation attempt).
+ * Truncation never lands below EXCERPT_MIN.
+ */
+export function normalizeExcerpt(excerpt: string): string {
+  const clean = (excerpt ?? "").replace(/\s+/g, " ").trim();
+  if (clean.length <= EXCERPT_MAX) return clean;
+  const cut = clean.slice(0, EXCERPT_MAX - 1);
+  const lastSpace = cut.lastIndexOf(" ");
+  const base = lastSpace >= EXCERPT_MIN - 1 ? cut.slice(0, lastSpace).trimEnd() : cut;
+  return `${base}…`;
+}
 
 export const SEO_RULES_PROMPT = `
 STRICT CONTENT RULES (violations cause automatic rejection):
@@ -43,9 +64,12 @@ Structure (GEO/AEO)
 - Open with 2-3 sentences that DIRECTLY and completely answer the question. No heading before it, no throat-clearing.
 - NO H1 headings anywhere (the site renders the H1). Use exactly 4-6 content H2 sections (##).
 - Each H2 section opens with one self-contained factual sentence that makes sense quoted out of context.
-- Include exactly one markdown comparison table (relevant options/tradeoffs).
+- Include exactly one markdown comparison table (relevant options/tradeoffs). It MUST use this exact pipe syntax:
+| Option | Typical speed | Best for |
+|---|---|---|
+| Example row | Example | Example |
 - End sections with a "## FAQ" heading containing 4-6 "### <question>?" subheadings, each followed by a 1-3 sentence answer paragraph.
-- 1,200-1,800 words total. Short paragraphs (≤3 sentences). Use bullet lists. Bold key phrases sparingly.
+- 1,200-2,200 words total. Short paragraphs (≤3 sentences). Use bullet lists. Bold key phrases sparingly.
 - Define niche jargon on first use. Write at an 8th-grade reading level.
 
 Links

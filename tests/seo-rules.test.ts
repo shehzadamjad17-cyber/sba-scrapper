@@ -1,5 +1,28 @@
 import { describe, it, expect } from "vitest";
-import { validateArticle, type GeneratedArticle } from "@/lib/seo-rules";
+import { validateArticle, normalizeExcerpt, type GeneratedArticle } from "@/lib/seo-rules";
+
+describe("normalizeExcerpt", () => {
+  it("returns compliant excerpts unchanged", () => {
+    const ok = "Denied an SBA loan? Learn the common denial reasons, what your letter means, and the fastest path to reapproval or an alternative.";
+    expect(normalizeExcerpt(ok)).toBe(ok);
+  });
+
+  it("truncates overlong excerpts at a word boundary into the 120-155 window", () => {
+    const long =
+      "Denied an SBA loan? Learn the common denial reasons, what your denial letter actually means for you, and the fastest realistic path back to reapproval or a funding alternative today.";
+    expect(long.length).toBeGreaterThan(155);
+    const out = normalizeExcerpt(long);
+    expect(out.length).toBeLessThanOrEqual(155);
+    expect(out.length).toBeGreaterThanOrEqual(120);
+    expect(out.endsWith("…")).toBe(true);
+    expect(out).not.toMatch(/\s…$/);
+  });
+
+  it("collapses internal whitespace and newlines", () => {
+    const messy = "Denied an SBA loan?\n  Learn the common denial reasons, what your letter means, and the fastest path to reapproval or an alternative.";
+    expect(normalizeExcerpt(messy)).not.toMatch(/\s{2,}|\n/);
+  });
+});
 
 const para = (s: string) => `${s} This sentence pads the word count with plain useful language for small business owners weighing their funding options carefully today.`;
 const filler = Array.from({ length: 30 }, (_, i) => para(`Filler paragraph number ${i + 1} explains one practical funding consideration in plainspoken terms.`)).join("\n\n");
