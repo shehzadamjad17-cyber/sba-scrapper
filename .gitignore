@@ -13,3 +13,6 @@ scripts/
 .superpowers/
 tsconfig.tsbuildinfo
 .env*
+
+# firecrawl CLI artifacts
+.firecrawl/
