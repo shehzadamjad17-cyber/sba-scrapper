@@ -12,3 +12,4 @@ scripts/
 # SDD scratch + build artifacts
 .superpowers/
 tsconfig.tsbuildinfo
+.env*
