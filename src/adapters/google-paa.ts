@@ -62,6 +62,17 @@ async function fetchPaaForSeed(page: Page, seed: string): Promise<string[]> {
     }
     return Array.from(new Set(out));
   });
+
+  // Zero questions is ambiguous: no PAA panel, stale selectors, or Google's
+  // anti-bot interstitial. Capture what the page actually was so
+  // adapterStats records the reason instead of a silent zero.
+  if (questions.length === 0) {
+    const diag = await page.evaluate(() => ({
+      title: document.title.slice(0, 80),
+      snippet: (document.body?.innerText ?? "").slice(0, 160).replace(/\s+/g, " "),
+    }));
+    throw new Error(`0 questions — page was: "${diag.title}" | ${diag.snippet}`);
+  }
   return questions;
 }
 
