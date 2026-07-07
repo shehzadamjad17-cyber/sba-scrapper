@@ -6,7 +6,9 @@
  * embedContent (dedup + niche match).
  *
  * Reads GEMINI_API_KEYS env var (CSV of keys, e.g. "key1,key2,key3").
- * Each key gets 10 RPM (free tier). 5 keys = 50 RPM total.
+ * Per-key RPM comes from GEMINI_RPM_LIMIT (default 10 = free tier).
+ * A single PAID key handles the whole run at 60+ RPM — set
+ * GEMINI_RPM_LIMIT accordingly; paid tier-1 flash allows ~1,000 RPM.
  */
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { logger } from "./logger";
@@ -17,7 +19,11 @@ export const GEMINI_GEN_MODEL = "gemini-2.5-flash";
 // quality vectors; cosineSimilarity is dimension-agnostic so any dim works
 // as long as all calls go through this same function (they do).
 export const GEMINI_EMBED_MODEL = "gemini-embedding-001";
-const FREE_RPM_LIMIT = 10;
+
+function rpmLimit(): number {
+  const parsed = parseInt(process.env.GEMINI_RPM_LIMIT ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 10;
+}
 
 interface KeyState {
   callTimes: number[];
@@ -51,7 +57,7 @@ function getAvailableKey(): { key: string; index: number } | null {
     const idx = (_currentKeyIdx + offset) % _keys.length;
     const state = _keyStates[idx];
     state.callTimes = state.callTimes.filter((t) => now - t < 60_000);
-    if (state.callTimes.length < FREE_RPM_LIMIT) {
+    if (state.callTimes.length < rpmLimit()) {
       _currentKeyIdx = idx;
       return { key: _keys[idx], index: idx };
     }
