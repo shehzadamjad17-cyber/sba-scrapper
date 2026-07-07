@@ -19,8 +19,13 @@ import type { NicheConfig } from "@/lib/niche";
 import type { AdapterResult, SourceAdapter, CandidateQuestion } from "./types";
 import { logger } from "@/lib/logger";
 
+// v149+ packs are arch-suffixed and support the nodejs22.x/24.x AL2023
+// runtimes. v131 died on Vercel's Node 24 runtime with "libnss3.so: cannot
+// open shared object file" — its runtime detection predated nodejs24.x, so
+// the bundled NSS libs never reached LD_LIBRARY_PATH. Keep this version in
+// lockstep with playwright-core's pinned chromium milestone (1.61 ↔ 149).
 const CHROMIUM_PACK_URL =
-  "https://github.com/Sparticuz/chromium/releases/download/v131.0.1/chromium-v131.0.1-pack.tar";
+  "https://github.com/Sparticuz/chromium/releases/download/v149.0.0/chromium-v149.0.0-pack.x64.tar";
 
 async function launchBrowser(): Promise<Browser> {
   const executablePath = await chromium.executablePath(CHROMIUM_PACK_URL);
