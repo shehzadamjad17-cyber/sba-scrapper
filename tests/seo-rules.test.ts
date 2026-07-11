@@ -126,3 +126,55 @@ describe("validateArticle", () => {
     }
   });
 });
+
+/** Build a body that passes every structural rule, parameterized by link prefix + CTA. */
+function validBodyWithOptions(prefix: string, cta: string): string {
+  const para = "Plain sentences fill this section with useful words for the reader to enjoy today. ".repeat(25); // 350 words × 4 sections = comfortably inside the 1,200-2,400 band
+  const faq = [
+    "## FAQ",
+    "### Is this a question?", "Yes, and this is the answer.",
+    "### Is this another question?", "Yes, another answer.",
+    "### Third question here?", "Third answer.",
+    "### Fourth question here?", "Fourth answer.",
+  ].join("\n\n");
+  return [
+    `Direct answer first, two sentences that stand alone. See [guide one](${prefix}alpha) and [guide two](${prefix}beta).`,
+    "## Section one", para,
+    "## Section two", para,
+    "## Section three", para,
+    `## Section four`, `${para} Ready? [Start here](${cta}).`,
+    "| Option | Speed | Best for |", "|---|---|---|", "| A | Fast | Everyone |",
+    faq,
+  ].join("\n\n");
+}
+
+const META = { slug: "test-article-slug", title: "A valid test title under sixty", excerpt: "x".repeat(130) };
+
+describe("validateArticle default (main site)", () => {
+  it("still validates /blog/ links and default money pages", () => {
+    const a = { ...META, body: validBodyWithOptions("/blog/", "/apply") };
+    const r = validateArticle(a, { allowedInternalSlugs: ["alpha", "beta"] });
+    expect(r.violations).toEqual([]);
+  });
+});
+
+describe("validateArticle with satellite options", () => {
+  it("accepts /resources/ links + custom money page", () => {
+    const a = { ...META, body: validBodyWithOptions("/resources/", "/apply") };
+    const r = validateArticle(a, {
+      allowedInternalSlugs: ["alpha", "beta"],
+      internalLinkPrefix: "/resources/",
+      moneyPages: ["/apply"],
+    });
+    expect(r.violations).toEqual([]);
+  });
+  it("rejects /blog/ links when prefix is /resources/", () => {
+    const a = { ...META, body: validBodyWithOptions("/blog/", "/apply") };
+    const r = validateArticle(a, {
+      allowedInternalSlugs: ["alpha", "beta"],
+      internalLinkPrefix: "/resources/",
+      moneyPages: ["/apply"],
+    });
+    expect(r.ok).toBe(false);
+  });
+});

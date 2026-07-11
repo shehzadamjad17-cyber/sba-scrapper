@@ -1,5 +1,8 @@
 {
   "crons": [
-    { "path": "/api/cron/daily", "schedule": "0 11 * * *" }
+    { "path": "/api/cron/daily?satellites=0", "schedule": "0 11 * * *" },
+    { "path": "/api/cron/daily?main=0&only=selnet-equipment", "schedule": "20 11 * * *" },
+    { "path": "/api/cron/daily?main=0&only=selnet-loc", "schedule": "40 11 * * *" },
+    { "path": "/api/cron/daily?main=0&only=selnet-cre", "schedule": "0 12 * * *" }
   ]
 }

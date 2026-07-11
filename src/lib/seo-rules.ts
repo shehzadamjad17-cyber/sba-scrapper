@@ -86,8 +86,14 @@ Voice & compliance
 
 export function validateArticle(
   a: GeneratedArticle,
-  opts: { allowedInternalSlugs: string[] }
+  opts: {
+    allowedInternalSlugs: string[];
+    internalLinkPrefix?: string;
+    moneyPages?: string[];
+  }
 ): { ok: boolean; violations: string[] } {
+  const prefix = opts.internalLinkPrefix ?? "/blog/";
+  const moneyPages = opts.moneyPages ?? MONEY_PAGES;
   const v: string[] = [];
   const body = a.body ?? "";
 
@@ -133,22 +139,22 @@ export function validateArticle(
 
   // --- links ---
   const links = Array.from(body.matchAll(/\[[^\]]*\]\(([^)\s]+)\)/g)).map((m) => m[1]);
-  const internal = links.filter((u) => u.startsWith("/blog/"));
+  const internal = links.filter((u) => u.startsWith(prefix));
   if (opts.allowedInternalSlugs.length === 0) {
     // No published posts to link to — ANY internal link is a hallucination.
     if (internal.length > 0) v.push(`internal links not allowed when no published posts exist (got ${internal.length})`);
   } else {
     if (internal.length < 2 || internal.length > 4)
-      v.push(`must have 2-4 internal /blog/ links (got ${internal.length})`);
+      v.push(`must have 2-4 internal ${prefix} links (got ${internal.length})`);
     const allowed = new Set(opts.allowedInternalSlugs);
     for (const u of internal) {
-      const slug = u.replace("/blog/", "").replace(/[#?].*$/, "");
+      const slug = u.replace(prefix, "").replace(/[#?].*$/, "");
       if (!allowed.has(slug)) v.push(`internal link to unknown slug "${slug}" (hallucinated?)`);
     }
   }
   const isMoneyLink = (u: string) =>
-    MONEY_PAGES.some((m) => u === m || u.startsWith(`${m}?`) || u.startsWith(`${m}#`) || u.startsWith(`${m}/`));
-  if (!links.some(isMoneyLink)) v.push(`missing money-page link (one of: ${MONEY_PAGES.join(", ")})`);
+    moneyPages.some((m) => u === m || u.startsWith(`${m}?`) || u.startsWith(`${m}#`) || u.startsWith(`${m}/`));
+  if (!links.some(isMoneyLink)) v.push(`missing money-page link (one of: ${moneyPages.join(", ")})`);
   const external = links.filter((u) => /^https?:\/\//i.test(u));
   if (external.length > 2) v.push(`at most 2 external links (got ${external.length})`);
   for (const u of external) {

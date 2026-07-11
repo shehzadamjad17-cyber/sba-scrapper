@@ -29,10 +29,13 @@ async function fetchRecentTitles(): Promise<string[]> {
   return Array.from(new Set([...posts.map((p) => p.title), ...drafts.map((d) => d.title)]));
 }
 
-export async function dedupCandidates(scored: ScoredCandidate[]): Promise<ScoredCandidate[]> {
+export async function dedupCandidates(
+  scored: ScoredCandidate[],
+  opts: { recentTitles?: string[] } = {}
+): Promise<ScoredCandidate[]> {
   if (scored.length === 0) return [];
 
-  const titles = await fetchRecentTitles();
+  const titles = opts.recentTitles ?? (await fetchRecentTitles());
   if (titles.length === 0) {
     logger.info("Dedup: no recent posts/drafts, returning all candidates", {
       candidateCount: scored.length,

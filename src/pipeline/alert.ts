@@ -106,3 +106,70 @@ export async function sendSuccessDigest(articles: DigestArticle[]): Promise<void
     });
   }
 }
+
+export interface SatelliteDigestSection {
+  brandName: string;
+  siteUrl: string;
+  published: { title: string; url: string; unpublishUrl: string }[];
+  drafted: { title: string; reasons: string[] }[];
+  errors: string[];
+}
+
+export function buildSatelliteDigestHtml(sections: SatelliteDigestSection[]): string {
+  const blocks = sections
+    .map((s) => {
+      const pub = s.published
+        .map(
+          (p) => `
+        <tr>
+          <td style="padding:6px 8px;border-bottom:1px solid #eee;">
+            <a href="${p.url}"><strong>${escapeHtml(p.title)}</strong></a>
+          </td>
+          <td style="padding:6px 8px;border-bottom:1px solid #eee;white-space:nowrap;">
+            <a href="${p.unpublishUrl}" style="color:#c00;">Unpublish</a>
+          </td>
+        </tr>`
+        )
+        .join("");
+      const drafts = s.drafted
+        .map(
+          (d) => `
+        <li><strong>${escapeHtml(d.title)}</strong><br/>
+        <span style="color:#666;font-size:12px;">${escapeHtml(d.reasons.slice(0, 3).join(" · "))}</span></li>`
+        )
+        .join("");
+      const errs = s.errors.map((e) => `<li style="color:#c00;">${escapeHtml(e)}</li>`).join("");
+      return `
+      <h3 style="margin:20px 0 6px;">${escapeHtml(s.brandName)}</h3>
+      ${pub ? `<table style="border-collapse:collapse;width:100%;">${pub}</table>` : `<p style="color:#666;">Nothing published.</p>`}
+      ${drafts ? `<p style="margin:10px 0 4px;"><strong>Held as draft (gate failed):</strong></p><ul>${drafts}</ul>` : ""}
+      ${errs ? `<ul>${errs}</ul>` : ""}`;
+    })
+    .join("");
+  return `<p>Satellite auto-blog run results:</p>${blocks}
+    <p style="color:#666;font-size:12px;">Published posts are LIVE. Click Unpublish on anything that shouldn't be.</p>`;
+}
+
+export async function sendSatelliteDigest(sections: SatelliteDigestSection[]): Promise<void> {
+  const apiKey = process.env.RESEND_API_KEY;
+  const to = process.env.SCRAPER_ALERT_EMAIL;
+  if (!apiKey || !to) {
+    logger.warn("Cannot send satellite digest — missing RESEND_API_KEY or SCRAPER_ALERT_EMAIL");
+    return;
+  }
+  const publishedCount = sections.reduce((n, s) => n + s.published.length, 0);
+  const resend = new Resend(apiKey);
+  try {
+    await resend.emails.send({
+      from: "SBA Content Scraper <noreply@sbaloanoptions.com>",
+      to,
+      subject: `[satellites] ${publishedCount} post(s) published across ${sections.length} site(s)`,
+      html: buildSatelliteDigestHtml(sections),
+    });
+    logger.info("Satellite digest sent", { to, publishedCount });
+  } catch (err) {
+    logger.error("Failed to send satellite digest", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
