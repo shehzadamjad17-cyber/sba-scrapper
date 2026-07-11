@@ -14,7 +14,7 @@ import type { NicheConfig } from "@/lib/niche";
 import type { SatelliteTarget } from "@/lib/targets";
 import type { ArticleGenResult, LinkMenuItem } from "./article";
 
-export const SATELLITE_PROMPT_VERSION = "sat-v1.0";
+export const SATELLITE_PROMPT_VERSION = "sat-v1.1";
 
 const LINK_MENU_SIZE = 8;
 
@@ -63,13 +63,13 @@ Structure (GEO/AEO)
 |---|---|---|
 | Example row | Example | Example |
 - End sections with a "## FAQ" heading containing 4-6 "### <question>?" subheadings, each followed by a 1-3 sentence answer paragraph.
-- 1,200-2,200 words total. Short paragraphs (≤3 sentences). Use bullet lists. Bold key phrases sparingly.
+- 1,500-2,200 words total — NEVER under 1,400. Short paragraphs (≤3 sentences). Use bullet lists. Bold key phrases sparingly.
 - NEVER use numbered lists (1. 2. 3.) — hyphen bullet lists only.
 - Define niche jargon on first use. Write at an 8th-grade reading level.
 
 Links
-- Link 2-4 of the provided internal articles inline where genuinely relevant, format [anchor text](${target.blogBasePath}/<slug>). ONLY use slugs from the provided list.
-- Include at least one call-to-action link to ${target.ctaPath}.
+- Link EXACTLY 3 of the provided internal articles inline where genuinely relevant, format [anchor text](${target.blogBasePath}/<slug>). ONLY use slugs from the provided list. NEVER more than 4 internal links in the whole article — count them before finishing.
+- MANDATORY (the article is auto-rejected without it): include a call-to-action link to ${target.ctaPath}, e.g. [See your options](${target.ctaPath}) in the closing section before the FAQ.
 - At most 2 external links, ONLY to: sba.gov, federalreserve.gov, irs.gov.
 
 Voice & compliance
