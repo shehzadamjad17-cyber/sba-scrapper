@@ -64,6 +64,7 @@ Structure (GEO/AEO)
 | Example row | Example | Example |
 - End sections with a "## FAQ" heading containing 4-6 "### <question>?" subheadings, each followed by a 1-3 sentence answer paragraph.
 - 1,200-2,200 words total. Short paragraphs (≤3 sentences). Use bullet lists. Bold key phrases sparingly.
+- NEVER use numbered lists (1. 2. 3.) — hyphen bullet lists only.
 - Define niche jargon on first use. Write at an 8th-grade reading level.
 
 Links

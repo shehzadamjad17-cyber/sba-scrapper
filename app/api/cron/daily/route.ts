@@ -3,8 +3,13 @@ import { runDaily } from "@/cron/runDaily";
 import { runSatellites } from "@/cron/runSatellites";
 
 export const runtime = "nodejs";
-// 300 seconds — Vercel Pro. Main run (~2-3.5 min at worst) + 3 sequential
-// satellite targets (~30-45s each). Satellites are skippable via ?satellites=0.
+// 300 seconds — Vercel Pro. The cron schedule (vercel.json) is split into
+// FOUR separate invocations so a single request never runs main + all 3
+// satellite targets together: one main-only run (?satellites=0, ~2-3.5 min
+// at worst) and three satellite-only runs (?main=0&only=<siteId>, ~30-45s
+// each). Ad-hoc calls without those params still run everything in one
+// invocation (main + all satellites) — fine for manual/dry-run use, just
+// not how the schedule invokes it.
 export const maxDuration = 300;
 
 export async function GET(request: NextRequest) {

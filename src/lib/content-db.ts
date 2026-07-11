@@ -45,10 +45,13 @@ const MAX_SLUG_ATTEMPTS = 10;
 export async function resolveSiteSlug(
   site: string,
   base: string,
-  execute: ExecuteFn = contentExecute()
+  execute: ExecuteFn = contentExecute(),
+  reserved?: string[]
 ): Promise<string> {
+  const reservedSet = new Set(reserved ?? []);
   for (let attempt = 1; attempt <= MAX_SLUG_ATTEMPTS; attempt++) {
     const slug = attempt === 1 ? base : `${base}-${attempt}`;
+    if (reservedSet.has(slug)) continue;
     const res = await execute(`SELECT id FROM GeneratedPost WHERE site = ? AND slug = ? LIMIT 1`, [site, slug]);
     if (res.rows.length === 0) return slug;
   }

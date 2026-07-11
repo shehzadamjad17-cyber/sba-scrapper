@@ -19,6 +19,10 @@ describe("resolveSiteSlug", () => {
       .mockResolvedValueOnce({ rows: [] });
     expect(await resolveSiteSlug("selnet-loc", "my-post", execute)).toBe("my-post-2");
   });
+  it("suffixes -2 when the base slug is reserved (e.g. a cornerstone slug)", async () => {
+    const execute = vi.fn().mockResolvedValue({ rows: [] });
+    expect(await resolveSiteSlug("selnet-loc", "my-post", execute, ["my-post"])).toBe("my-post-2");
+  });
 });
 
 describe("insertGeneratedPost", () => {

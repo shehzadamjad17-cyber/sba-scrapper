@@ -26,6 +26,8 @@ import { sendSatelliteDigest, type SatelliteDigestSection } from "@/pipeline/ale
 
 const ADAPTER_TIMEOUT_MS = 75_000;
 const DEFAULT_MAX_ARTICLES = 3;
+const ORPHAN_AGE_MS = 60 * 60 * 1000;
+const REQUIRED_ENV = ["CONTENT_DATABASE_URL", "CONTENT_DATABASE_AUTH_TOKEN", "UNPUBLISH_SECRET", "SCRAPER_PUBLIC_URL"];
 
 export interface SatelliteRunResult {
   siteId: string;
@@ -59,16 +61,19 @@ async function runOneTarget(
     errors: [],
   };
 
-  const run = await prisma.scraperRun.create({
-    data: {
-      status: "running",
-      site: target.siteId,
-      niche: target.niches.map((n) => n.slug).join(","),
-      adapterStats: JSON.stringify({}),
-    },
-  });
+  let runId: string | null = null;
 
   try {
+    const run = await prisma.scraperRun.create({
+      data: {
+        status: "running",
+        site: target.siteId,
+        niche: target.niches.map((n) => n.slug).join(","),
+        adapterStats: JSON.stringify({}),
+      },
+    });
+    runId = run.id;
+
     // Mine
     const fetchResults = await Promise.all(
       adapters.map(async (a) => ({
@@ -97,7 +102,7 @@ async function runOneTarget(
 
     if (winners.length === 0 || opts.dryRun) {
       await prisma.scraperRun.update({
-        where: { id: run.id },
+        where: { id: runId },
         data: {
           status: winners.length === 0 ? "no_question_picked" : "succeeded",
           completedAt: new Date(),
@@ -150,7 +155,12 @@ async function runOneTarget(
           critiqueIssues,
         });
 
-        const slug = await resolveSiteSlug(target.siteId, gen.article.slug);
+        const slug = await resolveSiteSlug(
+          target.siteId,
+          gen.article.slug,
+          undefined,
+          target.cornerstones.map((c) => c.slug)
+        );
         const { id } = await insertGeneratedPost({
           site: target.siteId,
           slug,
@@ -184,7 +194,7 @@ async function runOneTarget(
     }
 
     await prisma.scraperRun.update({
-      where: { id: run.id },
+      where: { id: runId },
       data: {
         status: "succeeded",
         completedAt: new Date(),
@@ -206,12 +216,14 @@ async function runOneTarget(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     logger.error("Satellite run failed", { target: target.siteId, error: msg });
-    await prisma.scraperRun
-      .update({
-        where: { id: run.id },
-        data: { status: "failed", completedAt: new Date(), errorMessage: msg },
-      })
-      .catch(() => {});
+    if (runId) {
+      await prisma.scraperRun
+        .update({
+          where: { id: runId },
+          data: { status: "failed", completedAt: new Date(), errorMessage: msg },
+        })
+        .catch(() => {});
+    }
     digest.errors.push(msg);
     return {
       result: { siteId: target.siteId, status: "failed", published: [], drafted: [], errorMessage: msg },
@@ -223,21 +235,57 @@ async function runOneTarget(
 export async function runSatellites(
   opts: { dryRun?: boolean; max?: number; only?: string } = {}
 ): Promise<SatelliteRunResult[]> {
+  // 0. Self-heal orphaned satellite ScraperRun rows (mirrors runDaily's self-heal)
+  await prisma.scraperRun
+    .updateMany({
+      where: { status: "running", startedAt: { lt: new Date(Date.now() - ORPHAN_AGE_MS) } },
+      data: { status: "failed", errorMessage: "orphaned (self-heal)", completedAt: new Date() },
+    })
+    .catch(() => {});
+
   const targets = opts.only ? TARGETS.filter((t) => t.siteId === opts.only) : TARGETS;
   if (targets.length === 0) {
     logger.warn("runSatellites: no matching targets", { only: opts.only });
     return [];
   }
+
+  // Env preflight — never create a ScraperRun or attempt to publish with a
+  // half-configured environment. Fail every selected target up front instead.
+  if (!opts.dryRun) {
+    const missing = REQUIRED_ENV.filter((k) => !process.env[k]);
+    if (missing.length > 0) {
+      const errorMessage = `preflight: missing env ${missing.join(", ")}`;
+      logger.error("runSatellites preflight failed — missing env", { missing });
+      return targets.map((t) => ({
+        siteId: t.siteId,
+        status: "failed",
+        published: [],
+        drafted: [],
+        errorMessage,
+      }));
+    }
+  }
+
   const adapters = getAdapters();
   const results: SatelliteRunResult[] = [];
   const digests: SatelliteDigestSection[] = [];
 
   // SEQUENTIAL by design: keeps Gemini/Firecrawl usage flat and per-target
   // failures isolated. ~30-45s per target inside the 300s cron budget.
+  // Each target is additionally wrapped here so a crash inside runOneTarget
+  // itself (not just inside its own try/catch) can never abort the loop or
+  // drop that target's digest section.
   for (const target of targets) {
-    const { result, digest } = await runOneTarget(target, adapters, opts);
-    results.push(result);
-    digests.push(digest);
+    try {
+      const { result, digest } = await runOneTarget(target, adapters, opts);
+      results.push(result);
+      digests.push(digest);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error("Satellite target crashed", { target: target.siteId, error: msg });
+      results.push({ siteId: target.siteId, status: "failed", published: [], drafted: [], errorMessage: msg });
+      digests.push({ brandName: target.brandName, siteUrl: target.siteUrl, published: [], drafted: [], errors: [msg] });
+    }
   }
 
   if (!opts.dryRun && digests.some((d) => d.published.length + d.drafted.length + d.errors.length > 0)) {

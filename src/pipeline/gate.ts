@@ -94,6 +94,16 @@ export function lintSatelliteArticle(
   );
   if (!hasCta) v.push(`missing CTA link to ${target.ctaPath}`);
 
+  // --- root-relative links: must be the CTA or under this target's blog base ---
+  const blogPrefix = `${target.blogBasePath}/`;
+  for (const u of links.filter((x) => x.startsWith("/"))) {
+    const isCta = u === target.ctaPath || u.startsWith(`${target.ctaPath}?`) || u.startsWith(`${target.ctaPath}#`);
+    const isBlog = u.startsWith(blogPrefix);
+    if (!isCta && !isBlog) {
+      v.push(`stray relative link "${u}" (not ${blogPrefix} or ${target.ctaPath})`);
+    }
+  }
+
   // --- absolute URLs: own site or allowlisted gov domains only ---
   for (const u of links.filter((x) => /^https?:\/\//i.test(x))) {
     let host = "";

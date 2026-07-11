@@ -79,4 +79,15 @@ describe("lintSatelliteArticle — structure", () => {
     const creBody = GOOD_BODY.replace(/\/resources\//g, "/insights/");
     expect(lintSatelliteArticle(article({ body: creBody }), cre).ok).toBe(true);
   });
+  it("fails on a stray root-relative link outside the blog base and CTA", () => {
+    const r = lintSatelliteArticle(
+      article({ body: `${GOOD_BODY}\n\nSee [old post](/blog/some-slug) for background.` }),
+      equipment
+    );
+    expect(r.ok).toBe(false);
+    expect(r.violations.join(" ")).toMatch(/stray relative link "\/blog\/some-slug"/);
+  });
+  it("still passes the GOOD_BODY (only /resources/ + /apply links)", () => {
+    expect(lintSatelliteArticle(article(), equipment).ok).toBe(true);
+  });
 });
