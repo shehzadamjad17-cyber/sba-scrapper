@@ -34,7 +34,7 @@ const ADAPTER_TIMEOUT_MS = 75_000;
 const ORPHAN_AGE_MS = 60 * 60 * 1000;
 const DEFAULT_MAX_ARTICLES = 3;
 
-function getAdapters(): SourceAdapter[] {
+export function getAdapters(): SourceAdapter[] {
   const adapters: SourceAdapter[] = [];
   const hasReddit =
     !!process.env.REDDIT_CLIENT_ID &&

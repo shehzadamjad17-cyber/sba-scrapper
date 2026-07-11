@@ -52,6 +52,7 @@ model ScraperRun {
   draftId               String?   @unique
   topScore              Float?
   adapterStats          String
+  site                  String?
 
   @@index([startedAt])
   @@index([status])

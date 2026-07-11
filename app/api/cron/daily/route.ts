@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { runDaily } from "@/cron/runDaily";
+import { runSatellites } from "@/cron/runSatellites";
 
 export const runtime = "nodejs";
-// 300 seconds — Vercel Pro. The run mines 4 niches, makes ~12-18 batched
-// Gemini calls, and generates up to 3 full articles in parallel (~2-3.5 min).
+// 300 seconds — Vercel Pro. Main run (~2-3.5 min at worst) + 3 sequential
+// satellite targets (~30-45s each). Satellites are skippable via ?satellites=0.
 export const maxDuration = 300;
 
 export async function GET(request: NextRequest) {
@@ -21,7 +22,11 @@ export async function GET(request: NextRequest) {
   const dryRun = url.searchParams.get("dryRun") === "1";
   const maxRaw = parseInt(url.searchParams.get("max") ?? "", 10);
   const max = Number.isFinite(maxRaw) ? maxRaw : undefined;
+  const skipSatellites = url.searchParams.get("satellites") === "0";
+  const skipMain = url.searchParams.get("main") === "0";
+  const only = url.searchParams.get("only") ?? undefined;
 
-  const result = await runDaily({ dryRun, max });
-  return NextResponse.json(result);
+  const main = skipMain ? null : await runDaily({ dryRun, max });
+  const satellites = skipSatellites ? [] : await runSatellites({ dryRun, max, only });
+  return NextResponse.json({ main, satellites });
 }
