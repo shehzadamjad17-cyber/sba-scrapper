@@ -45,12 +45,19 @@ export const TARGETS: SatelliteTarget[] = [
           "equipment financing", "equipment loan", "heavy equipment loan",
           "finance used equipment", "equipment loan rates", "equipment financing bad credit",
           "semi truck financing", "construction equipment financing", "equipment lease vs loan",
+          // GSC-derived 2026-07-13: queries already earning impressions for this domain
+          "restaurant equipment financing", "equipment financing for startups",
+          "capital equipment costs", "capital equipment finance", "used capital equipment",
         ],
         subreddits: ["smallbusiness", "Entrepreneur", "Construction"],
         paaSeeds: [
           "how does equipment financing work",
           "what credit score do I need to finance equipment",
           "can I finance used equipment for my business",
+          // GSC-derived 2026-07-13
+          "how to finance restaurant equipment",
+          "can a startup get equipment financing",
+          "how much does capital equipment cost",
         ],
         youtubeSearches: ["equipment financing explained", "how to finance construction equipment"],
         ctaPath: "/apply",

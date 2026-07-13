@@ -34,9 +34,18 @@ export function contentExecute(): ExecuteFn {
   }
   if (!cached) cached = createClient({ url, authToken });
   const client = cached;
+  // Turso free-tier DBs cold-start and occasionally 502 on the first request;
+  // one retry absorbs it. Without this, a 502 mid-run can drop an already
+  // generated article (wasted Gemini spend) or blank a dedup/link-menu fetch.
   return async (sql, args) => {
-    const res = await client.execute({ sql, args });
-    return { rows: res.rows as unknown as Record<string, unknown>[] };
+    try {
+      const res = await client.execute({ sql, args });
+      return { rows: res.rows as unknown as Record<string, unknown>[] };
+    } catch {
+      await new Promise((r) => setTimeout(r, 750));
+      const res = await client.execute({ sql, args });
+      return { rows: res.rows as unknown as Record<string, unknown>[] };
+    }
   };
 }
 
